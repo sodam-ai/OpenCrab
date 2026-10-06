@@ -172,9 +172,17 @@ def status() -> None:
 @main.command()
 @click.argument("path", type=click.Path(exists=True))
 @click.option("--recursive", "-r", is_flag=True, default=False)
-@click.option("--extension", "-e", default=".txt,.md,.py", show_default=True)
-def ingest(path: str, recursive: bool, extension: str) -> None:
+@click.option(
+    "--extension",
+    "-e",
+    default=".txt,.md,.py,.pdf,.hwp,.hwpx,.docx,.xlsx,.pptx",
+    show_default=True,
+    help="Comma-separated extensions. PDF, HWP/HWPX, DOCX, XLSX and PPTX are parsed with Kordoc 4.x.",
+)
+@click.option("--kordoc-bin", default="", envvar="KORDOC_BIN", help="Kordoc command; defaults to `kordoc` on PATH.")
+def ingest(path: str, recursive: bool, extension: str, kordoc_bin: str) -> None:
     """Ingest files from PATH into the ontology vector store."""
+    from opencrab.ontology.documents import read_document
     from opencrab.config import get_settings
     from opencrab.ontology.query import HybridQuery
     from opencrab.stores.factory import make_doc_store, make_graph_store, make_vector_store
@@ -185,10 +193,10 @@ def ingest(path: str, recursive: bool, extension: str) -> None:
     mongo = make_doc_store(cfg)
     hybrid = HybridQuery(chroma, neo4j)
 
-    extensions = [e.strip() for e in extension.split(",")]
+    extensions = [e.strip().lower() for e in extension.split(",")]
     root = Path(path)
-    files = list(root.rglob("*")) if recursive else list(root.iterdir())
-    files = [f for f in files if f.is_file() and f.suffix in extensions]
+    files = [root] if root.is_file() else (list(root.rglob("*")) if recursive else list(root.iterdir()))
+    files = [f for f in files if f.is_file() and f.suffix.lower() in extensions]
 
     if not files:
         console.print(f"[yellow]No files with extensions {extensions} found in {path}[/yellow]")
@@ -199,11 +207,16 @@ def ingest(path: str, recursive: bool, extension: str) -> None:
     ok_count = 0
     for file in files:
         try:
-            text = file.read_text(encoding="utf-8", errors="ignore")
-            if not text.strip():
+            read = read_document(file, kordoc_bin=kordoc_bin)
+            if not read.ok:
+                if read.meta.get("parse_error"):
+                    console.print(f"  [yellow]SKIP[/yellow] {file.name}: {read.meta['parse_error']}")
                 continue
+            text = read.text
             source_id = str(file.resolve())
-            meta = {"source_path": str(file), "extension": file.suffix}
+            meta = {"source_path": str(file), "extension": file.suffix, "parser": read.parser}
+            if read.meta.get("page_count"):
+                meta["page_count"] = read.meta["page_count"]
 
             hybrid.ingest(text=text, source_id=source_id, metadata=meta)
 
@@ -226,7 +239,8 @@ def ingest(path: str, recursive: bool, extension: str) -> None:
 @main.command()
 @click.argument("path", type=click.Path(exists=True))
 @click.option("--recursive", "-r", is_flag=True, default=False)
-@click.option("--extension", "-e", default=".md,.txt,.py", show_default=True)
+@click.option("--extension", "-e", default=".md,.txt,.py,.pdf,.hwp,.hwpx,.docx,.xlsx,.pptx", show_default=True)
+@click.option("--kordoc-bin", default="", envvar="KORDOC_BIN", help="Kordoc command; defaults to `kordoc` on PATH.")
 @click.option("--model", default="claude-haiku-4-5-20251001", show_default=True, help="Claude model for extraction.")
 @click.option("--dry-run", is_flag=True, default=False, help="Extract but do not write to stores.")
 @click.option("--api-key", default=None, envvar="ANTHROPIC_API_KEY", help="Anthropic API key.")
@@ -237,6 +251,7 @@ def extract(
     model: str,
     dry_run: bool,
     api_key: str | None,
+    kordoc_bin: str = "",
 ) -> None:
     """LLM-extract ontology nodes/edges from files and write to the graph."""
     from opencrab.config import get_settings
@@ -258,10 +273,10 @@ def extract(
     builder = OntologyBuilder(graph, doc, sql)
     extractor = LLMExtractor(api_key=api_key, model=model)
 
-    extensions = [e.strip() for e in extension.split(",")]
+    extensions = [e.strip().lower() for e in extension.split(",")]
     root = Path(path)
-    files = list(root.rglob("*")) if recursive else list(root.iterdir())
-    files = [f for f in files if f.is_file() and f.suffix in extensions]
+    files = [root] if root.is_file() else (list(root.rglob("*")) if recursive else list(root.iterdir()))
+    files = [f for f in files if f.is_file() and f.suffix.lower() in extensions]
 
     if not files:
         console.print(f"[yellow]No files with extensions {extensions} found.[/yellow]")
@@ -276,7 +291,7 @@ def extract(
     for file in files:
         console.print(f"\n[bold]{file.name}[/bold]")
         try:
-            result = extractor.extract_from_file(file)
+            result = extractor.extract_from_file(file, kordoc_bin=kordoc_bin)
             console.print(f"  nodes={len(result.nodes)} edges={len(result.edges)}", end="")
             if result.errors:
                 console.print(f" [yellow]warn={len(result.errors)}[/yellow]")

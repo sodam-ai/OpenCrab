@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -499,9 +500,10 @@ def ontology_extract(
 
 
 def ontology_ingest(
-    text: str,
-    source_id: str,
+    text: str = "",
+    source_id: str = "",
     metadata: dict[str, Any] | None = None,
+    path: str = "",
 ) -> dict[str, Any]:
     """
     Ingest a text document into the vector store.
@@ -517,11 +519,28 @@ def ontology_ingest(
         Stable unique identifier for this source document.
     metadata:
         Optional metadata (e.g. space, node_id, author, created_at).
+    path:
+        Optional local file to read instead of ``text``. PDF, HWP/HWPX, DOCX,
+        XLSX and PPTX are parsed with Kordoc 4.x; ``source_id`` defaults to the path.
     """
     ctx = _get_context()
+    meta = _clean_meta(metadata or {})
+    if path:
+        from opencrab.ontology.documents import read_document
+
+        file_path = Path(path).expanduser()
+        if not file_path.is_file():
+            return {"source_id": source_id or path, "error": "file not found: %s" % path}
+        read = read_document(file_path)
+        if not read.ok:
+            return {"source_id": source_id or str(file_path), "error": read.meta.get("parse_error") or "no text extracted", "parser": read.parser}
+        text = read.text
+        source_id = source_id or str(file_path.resolve())
+        meta = {**meta, "source_path": str(file_path), "parser": read.parser}
     text = _clean_str(text)
     source_id = _clean_str(source_id)
-    meta = _clean_meta(metadata or {})
+    if not text or not source_id:
+        return {"source_id": source_id, "error": "text and source_id are required unless path is given"}
     result: dict[str, Any] = {"source_id": source_id, "stores": {}}
 
     # Ingest into vector store
@@ -1222,15 +1241,16 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         },
     },
     "ontology_ingest": {
-        "description": "Ingest a text document into the vector and document stores.",
+        "description": "Ingest a text document, or a local file via path (Kordoc 4.x for PDF, HWP/HWPX, DOCX, XLSX, PPTX), into the vector and document stores.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "text": {"type": "string", "description": "Text content to ingest."},
-                "source_id": {"type": "string", "description": "Stable source identifier."},
+                "source_id": {"type": "string", "description": "Stable source identifier (defaults to the file path when path is given)."},
                 "metadata": {"type": "object", "description": "Optional metadata."},
+                "path": {"type": "string", "description": "Local file to read instead of text. PDF, HWP/HWPX, DOCX, XLSX and PPTX are parsed with Kordoc 4.x."},
             },
-            "required": ["text", "source_id"],
+            "required": [],
         },
     },
     "workflow_create_run": {

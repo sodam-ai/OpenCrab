@@ -141,11 +141,15 @@ class LLMExtractor:
             errors=errors,
         )
 
-    def extract_from_file(self, path: str | Path) -> ExtractionResult:
-        """Extract ontology elements from a file."""
+    def extract_from_file(self, path: str | Path, *, kordoc_bin: str = "") -> ExtractionResult:
+        """Extract ontology elements from a file; documents are parsed with Kordoc 4.x."""
+        from opencrab.ontology.documents import read_document
+
         p = Path(path)
-        text = p.read_text(encoding="utf-8", errors="ignore")
-        return self.extract_from_text(text, source_id=str(p.resolve()))
+        read = read_document(p, kordoc_bin=kordoc_bin)
+        if not read.ok and read.meta.get("parse_error"):
+            raise ValueError(read.meta["parse_error"])
+        return self.extract_from_text(read.text, source_id=str(p.resolve()))
 
     # ------------------------------------------------------------------
     # Internal helpers

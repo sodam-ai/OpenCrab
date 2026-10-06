@@ -91,6 +91,23 @@ opencrab manifest
 opencrab query "system performance and error rates"
 ```
 
+### 3-1. Ingest documents (Kordoc 4.x)
+
+PDF, HWP/HWPX, DOCX, XLSX and PPTX are parsed with
+[Kordoc](https://www.npmjs.com/package/kordoc) 4.x; Markdown and other text
+files are read directly.
+
+```bash
+npm install --global kordoc@latest      # 4.x is required for HWPX, DOCX and XLSX
+opencrab ingest ./reports -r            # parses documents, then indexes the text
+opencrab extract ./reports -r --dry-run # LLM extraction over the same parsed text
+```
+
+`KORDOC_BIN` (or `--kordoc-bin`) selects another Kordoc command, for example
+`npx kordoc`. Files Kordoc cannot parse are reported and skipped, never indexed
+empty. The MCP tool `ontology_ingest` also accepts `path` to read a local file
+the same way.
+
 ### 4. Add LocalCrab as an MCP server
 
 ```bash
